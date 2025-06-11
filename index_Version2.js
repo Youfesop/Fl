@@ -1,0 +1,166 @@
+const { Client, GatewayIntentBits, Events, Partials, EmbedBuilder } = require('discord.js');
+const express = require('express');
+
+const client = new Client({ 
+    intents: [ 
+        GatewayIntentBits.Guilds, 
+        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.MessageContent, 
+        GatewayIntentBits.GuildMembers 
+    ], 
+    partials: [Partials.Channel] 
+});
+
+// Express server for uptime monitoring
+const app = express();
+
+app.get('/', (req, res) => {
+  res.send('Bot is alive!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('Web server is running on port ' + PORT);
+});
+
+// احصل على التوكن من متغيرات البيئة (آمن)
+const TOKEN = process.env.BOT_TOKEN;
+const CREDIT_CHANNEL_ID = '1370500290788200594';
+const RECEIVER_ID = '1122934386615140432';
+
+const rolesData = [
+    { name: 'simple person', price: 1000000, roleId: '1375712064311656470' },
+    { name: 'donator', price: 5000000, roleId: '1375711474558828594' },
+    { name: 'VIP', price: 10000000, roleId: '1371533212374929449' },
+    { name: 'super vip', price: 30000000, roleId: '1376586336777146368' }
+];
+
+client.on(Events.MessageCreate, async (message) => {
+    if (message.channel.id !== CREDIT_CHANNEL_ID || message.author.id !== '282859044593598464') return;
+
+    const probotRegex = /\*\*ـ (.*?), قام بتحويل `\$(\d+)` لـ <@!?1122934386615140432> \*\* \|:moneybag:/;
+    const match = message.content.match(probotRegex);
+    
+    if (!match) return;
+
+    const buyerUsername = match[1];
+    const transferAmount = parseInt(match[2]);
+
+    console.log(`ProBot detected transfer: ${buyerUsername} sent $${transferAmount}`);
+
+    const buyerMember = message.guild.members.cache.find(m => 
+        m.user.username === buyerUsername || 
+        m.displayName === buyerUsername ||
+        m.user.globalName === buyerUsername
+    );
+    
+    if (!buyerMember) {
+        console.log(`Member not found: ${buyerUsername}`);
+        return;
+    }
+
+    let selectedRole = null;
+    
+    for (const role of rolesData) {
+        const minAmount = role.price * 0.90;
+        const maxAmount = role.price * 1.05;
+        
+        if (transferAmount >= minAmount && transferAmount <= maxAmount) {
+            selectedRole = role;
+            break;
+        }
+    }
+
+    if (!selectedRole) {
+        const affordableRoles = rolesData.filter(r => transferAmount >= r.price * 0.85);
+        if (affordableRoles.length > 0) {
+            selectedRole = affordableRoles.reduce((prev, current) => {
+                return (current.price <= transferAmount && current.price > prev.price) ? current : prev;
+            });
+        }
+    }
+
+    if (!selectedRole) {
+        console.log(`No suitable role found for amount: $${transferAmount}`);
+        return;
+    }
+
+    try {
+        if (buyerMember.roles.cache.has(selectedRole.roleId)) {
+            console.log(`${buyerUsername} already has role ${selectedRole.name}`);
+            return;
+        }
+
+        await buyerMember.roles.add(selectedRole.roleId);
+        console.log(`✅ Role ${selectedRole.name} given to ${buyerUsername} for $${transferAmount}`);
+        
+        await message.channel.send(`تم شراء الرتبة بنجاح استمتع 🗿👌\n**${buyerUsername}** حصل على رتبة **${selectedRole.name}**!`);
+        
+    } catch (err) {
+        console.error('Error giving role:', err);
+    }
+});
+
+client.once(Events.ClientReady, () => {
+    console.log(`✅ Logged in as ${client.user.tag}`);
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === "buy_role") {
+      const roleKey = interaction.options.getString("role");
+      const role = rolesData.find(r => r.name.toLowerCase() === roleKey?.toLowerCase());
+      if (!role) {
+        return interaction.reply({ content: `❌ الرتبة غير موجودة.`, ephemeral: true });
+      }
+
+      const commandText = `c ${RECEIVER_ID} ${role.price}`;
+      
+      const embed = new EmbedBuilder()
+        .setTitle(`🛒 شراء رتبة ${role.name}`)
+        .setDescription(`💰 السعر: $${role.price.toLocaleString()}\n\n🔥 **لشراء هذه الرتبة، انسخ الأمر التالي:**`)
+        .addFields({ 
+          name: '📝 اكتب هذا الأمر:', 
+          value: `\`${commandText}\``, 
+          inline: false 
+        })
+        .setColor('#00ff00')
+        .setFooter({ text: 'انسخ الأمر!' });
+
+      await interaction.reply({
+        embeds: [embed],
+        ephemeral: true
+      });
+    }
+  }
+});
+
+// تسجيل الأمر
+client.on(Events.ClientReady, async () => {
+  const data = [
+    {
+      name: "buy_role",
+      description: "شراء رتبة",
+      options: [
+        {
+          name: "role",
+          type: 3,
+          description: "اختر الرتبة",
+          required: true,
+          choices: rolesData.map((role) => ({
+            name: role.name,
+            value: role.name
+          }))
+        }
+      ]
+    }
+  ];
+  
+  const guilds = client.guilds.cache;
+  for (const guild of guilds.values()) {
+    await guild.commands.set(data);
+  }
+  console.log("✅ تم تسجيل الأوامر.");
+});
+
+client.login(TOKEN);
